@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>むすぶAI チャット</title>
+  <style>
+    body { font-family: 'Segoe UI', sans-serif; background: #f9fafc; color: #212121; margin: 0; }
+    header { background: #27c6e9; color: #fff; padding: 16px; text-align: center; font-size: 1.5em; letter-spacing: 2px; }
+    #status { color: #0e74b7; margin: 10px 0; text-align: center; }
+    #ai-info {
+      background: #f0ffea;
+      border-left: 5px solid #27c6e9;
+      color: #0e74b7;
+      margin: 0 12px 10px 12px;
+      padding: 10px 16px 10px 14px;
+      border-radius: 7px;
+      font-size: 1.01em;
+      font-weight: 500;
+      box-shadow: 0 1px 4px #ddddff3a;
+    }
+    #log { background: #fff; height: 400px; overflow-y: auto; padding: 16px; margin: 12px; border-radius: 8px; border: 1px solid #e0e0e0; }
+    .ai { background: #e7f3ff; margin: 8px 0; padding: 8px 12px; border-radius: 8px; text-align: left; color: #0e74b7; }
+    .user { background: #c6f1e7; margin: 8px 0; padding: 8px 12px; border-radius: 8px; text-align: right; color: #187d69; }
+    #inputArea { display: flex; gap: 8px; margin: 12px; }
+    #msg { flex: 1; font-size: 1em; padding: 8px; border-radius: 4px; background: #f1f9fa; color: #212121; border: 1px solid #b2e0eb; }
+    #send { padding: 8px 20px; font-size: 1em; background: #27c6e9; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+    #send:disabled { background: #bbb; cursor: not-allowed; }
+    #sdpArea { margin: 12px; }
+    textarea { width: 100%; height: 80px; margin-top: 4px; background: #f1f9fa; color: #0e74b7; border: 1px solid #b2e0eb; border-radius: 4px; }
+    .ai-label {
+      background: #27c6e9;
+      color: #fff;
+      padding: 2px 10px;
+      border-radius: 6px;
+      font-size: 0.9em;
+      margin-left: 7px;
+      letter-spacing: 0.05em;
+      vertical-align: middle;
+    }
+    .obf-label {
+      font-family: 'Cascadia Code', 'Consolas', monospace;
+      color: #0e74b7;
+      font-size: 1.05em;
+      letter-spacing: 0.03em;
+      background: #e7f3ff;
+      padding: 2px 6px;
+      border-radius: 5px;
+      margin-bottom: 5px;
+      display: inline-block;
+    }
+    .sdp-tip {
+      color: #2dbe60;
+      font-size: 0.96em;
+      margin-bottom: 2px;
+    }
+    #autoAuth {
+      color: #2dbe60;
+      font-size: 0.98em;
+      margin-bottom: 4px;
+    }
+    #clearAuthBtn {
+      font-size: 0.9em;
+      background: #eee;
+      color: #27c6e9;
+      border: 1px solid #27c6e9;
+      border-radius: 5px;
+      padding: 2px 10px;
+      margin-left: 10px;
+      cursor: pointer;
+    }
+    #clearAuthBtn:hover {
+      background: #e7f3ff;
+    }
+  </style>
+</head>
+<body>
+  <header>🤖 むすぶAI チャット <span class="ai-label">むすぶAIと安全通信中</span></header>
+  <div id="status">むすぶAIと会話しています</div>
+  <div id="ai-info">
+    <strong>むすぶAIシステムと安全に通信しています。</strong><br>
+    <span style="font-size:0.97em;">
+      むすぶAIはあなたのメッセージに自動応答します。<br>
+      本システムは認証済みAI専用セッションで動作しています。
+    </span>
+  </div>
+  <div id="log"></div>
+  <div id="inputArea">
+    <input id="msg" type="text" placeholder="むすぶAIに送信..." disabled>
+    <button id="send" disabled>送信</button>
+  </div>
+  <div id="sdpArea">
+    <div class="obf-label">認証コード（自動生成）</div><br>
+    <div class="sdp-tip">このコードをむすぶAI側に送信してください。</div>
+    <textarea id="localSDP" readonly></textarea>
+    <div class="obf-label" style="margin-top:11px;">むすぶAI接続キー（AI SYSTEM ENCODED）</div><br>
+    <div class="sdp-tip">むすぶAIから受け取った接続キーを貼り付けて「セット」を押してください。</div>
+    <div id="autoAuth" style="display:none;">前回のむすぶAI接続キーを自動で適用しました。</div>
+    <textarea id="remoteSDP"></textarea>
+    <button id="setRemote">セット</button>
+    <button id="clearAuthBtn" style="display:none;">接続キーをクリア</button>
+  </div>
+  <script>
+    const status = document.getElementById('status');
+    const log = document.getElementById('log');
+    const msg = document.getElementById('msg');
+    const sendBtn = document.getElementById('send');
+    const localSDP = document.getElementById('localSDP');
+    const remoteSDP = document.getElementById('remoteSDP');
+    const setRemote = document.getElementById('setRemote');
+    const autoAuth = document.getElementById('autoAuth');
+    const clearAuthBtn = document.getElementById('clearAuthBtn');
+
+    let pc, dc;
+    let connected = false;
+
+    function obfuscate(str) {
+      const b64 = btoa(unescape(encodeURIComponent(str)));
+      const rot13 = b64.replace(/[A-Za-z]/g, c =>
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz".charAt(
+          ("NOPQRSTUVWXYZABCDEFGHIJKLMnopqrstuvwxyzabcdefghijklm").indexOf(c)
+        )
+      );
+      const prefix = "MUSUBUAI{";
+      const suffix = "}END";
+      return prefix + rot13 + suffix;
+    }
+    function deobfuscate(str) {
+      if (!str.startsWith("MUSUBUAI{") || !str.endsWith("}END")) return null;
+      const rot13 = str.slice(9, -4);
+      const b64 = rot13.replace(/[A-Za-z]/g, c =>
+        "NOPQRSTUVWXYZABCDEFGHIJKLMnopqrstuvwxyzabcdefghijklm".charAt(
+          "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz".indexOf(c)
+        )
+      );
+      try {
+        return decodeURIComponent(escape(atob(b64)));
+      } catch {
+        return null;
+      }
+    }
+
+    function addMessage(text, sender) {
+      const div = document.createElement('div');
+      div.className = sender;
+      div.textContent = text;
+      log.appendChild(div);
+      log.scrollTop = log.scrollHeight;
+    }
+
+    async function start() {
+      pc = new RTCPeerConnection();
+      dc = pc.createDataChannel("chat");
+      dc.onopen = () => {
+        connected = true;
+        status.textContent = "むすぶAIと接続されました。チャットできます";
+        msg.disabled = false;
+        sendBtn.disabled = false;
+      };
+      dc.onclose = () => {
+        connected = false;
+        status.textContent = "むすぶAIとの接続が切断されました。再接続してください。";
+        msg.disabled = true;
+        sendBtn.disabled = true;
+      };
+      dc.onmessage = (event) => {
+        addMessage(event.data, 'ai');
+      };
+
+      pc.onicecandidate = () => {
+        localSDP.value = obfuscate(JSON.stringify(pc.localDescription));
+      };
+
+      await pc.setLocalDescription(await pc.createOffer());
+      localSDP.value = obfuscate(JSON.stringify(pc.localDescription));
+    }
+
+    sendBtn.onclick = () => {
+      if (msg.value && dc && dc.readyState === 'open') {
+        addMessage(msg.value, 'user');
+        dc.send(msg.value);
+        msg.value = '';
+      }
+    };
+
+    msg.addEventListener('keydown', e => {
+      if (e.key === 'Enter') sendBtn.click();
+    });
+
+    setRemote.onclick = async () => {
+      if (!remoteSDP.value) return;
+      const decoded = deobfuscate(remoteSDP.value);
+      if (!decoded) {
+        alert("むすぶAI接続キーの形式が不正です（MUSUBUAI{...}END）");
+        return;
+      }
+      const sdp = JSON.parse(decoded);
+      await pc.setRemoteDescription(sdp);
+
+      try {
+        localStorage.setItem("lastMusubuAIKey", remoteSDP.value);
+        showAutoAuthUI();
+      } catch {}
+      // ここでDataChannelが既にopenなら即有効化
+      setTimeout(checkDataChannelOpen, 300);
+    };
+
+    function checkDataChannelOpen() {
+      if (dc && dc.readyState === "open") {
+        msg.disabled = false;
+        sendBtn.disabled = false;
+        status.textContent = "むすぶAIと接続されました。チャットできます";
+      }
+    }
+
+    function showAutoAuthUI() {
+      autoAuth.style.display = "inline";
+      clearAuthBtn.style.display = "inline";
+    }
+    function hideAutoAuthUI() {
+      autoAuth.style.display = "none";
+      clearAuthBtn.style.display = "none";
+    }
+
+    clearAuthBtn.onclick = () => {
+      localStorage.removeItem("lastMusubuAIKey");
+      remoteSDP.value = "";
+      hideAutoAuthUI();
+    };
+
+    (async function(){
+      await start();
+
+      const lastMusubuAIKey = localStorage.getItem("lastMusubuAIKey");
+      if (lastMusubuAIKey) {
+        remoteSDP.value = lastMusubuAIKey;
+        showAutoAuthUI();
+        setTimeout(() => setRemote.click(), 300);
+      }
+    })();
+  </script>
+</body>
+</html>
