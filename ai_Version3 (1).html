@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>むすぶAI コアシステム</title>
+  <style>
+    body { font-family: 'Segoe UI', sans-serif; background: #111; color: #e6e6e6; margin: 0; }
+    header { background: #212121; padding: 16px; text-align: center; font-size: 1.5em; letter-spacing: 2px; }
+    #status { color: #0ff1ce; margin: 10px 0; text-align: center; }
+    #ai-info {
+      background: #212c19;
+      border-left: 5px solid #0ff1ce;
+      color: #0ff1ce;
+      margin: 0 12px 10px 12px;
+      padding: 10px 16px 10px 14px;
+      border-radius: 7px;
+      font-size: 1.01em;
+      font-weight: 500;
+      box-shadow: 0 1px 4px #0044443a;
+    }
+    #log { background: #232323; height: 400px; overflow-y: auto; padding: 16px; margin: 12px; border-radius: 8px; }
+    .ai { background: #1e90ff33; margin: 8px 0; padding: 8px 12px; border-radius: 8px; text-align: left; }
+    .user { background: #333333; margin: 8px 0; padding: 8px 12px; border-radius: 8px; text-align: right; }
+    #inputArea { display: flex; gap: 8px; margin: 12px; }
+    #msg { flex: 1; font-size: 1em; padding: 8px; border-radius: 4px; background: #181818; color: #fff; border: 1px solid #444; }
+    #send { padding: 8px 20px; font-size: 1em; background: #0ff1ce; color: #222; border: none; border-radius: 4px; cursor: pointer; }
+    #send:disabled { background: #555; cursor: not-allowed; }
+    #sdpArea { margin: 12px; }
+    textarea { width: 100%; height: 80px; margin-top: 4px; background: #181818; color: #0ff1ce; border: 1px solid #444; border-radius: 4px; }
+    .generating { color: #fff700; }
+    .obf-label {
+      font-family: 'Cascadia Code', 'Consolas', monospace;
+      color: #0ff1ce;
+      font-size: 1.08em;
+      letter-spacing: 0.05em;
+      background: #181828;
+      padding: 2px 6px;
+      border-radius: 5px;
+      margin-bottom: 6px;
+      display: inline-block;
+    }
+    .ai-badge {
+      background: #0ff1ce;
+      color: #222;
+      padding: 1px 8px;
+      border-radius: 7px;
+      margin-left: 5px;
+      font-weight: bold;
+      font-size: 0.8em;
+      letter-spacing: 0.07em;
+    }
+    .sdp-tip {
+      color: #fe0;
+      font-size: 0.96em;
+      margin-bottom: 2px;
+    }
+  </style>
+</head>
+<body>
+  <header>🤖 むすぶAI コアシステム <span class="ai-badge">MUSUBU AI CORE</span></header>
+  <div id="status">むすぶAIコアセッション待機中...</div>
+  <div id="ai-info">
+    <strong>むすぶAIコアがあなたの会話をサポートします。</strong><br>
+    <span style="font-size:0.97em;">
+      利用には認証済み接続キーが必要です。<br>
+      むすぶAIは自動応答機能を搭載しています。
+    </span>
+  </div>
+  <div id="log"></div>
+  <div id="inputArea">
+    <input id="msg" type="text" placeholder="応答内容を入力..." disabled>
+    <button id="send" disabled>送信</button>
+  </div>
+  <div id="sdpArea">
+    <div class="obf-label">むすぶAI接続キー（AI SYSTEM ENCODED）</div><br>
+    <div class="sdp-tip">この接続キーをユーザーに渡してください。</div>
+    <textarea id="localSDP" readonly></textarea>
+    <div class="obf-label" style="margin-top:11px;">認証コード（DECODE REQUIRED）</div><br>
+    <div class="sdp-tip">ユーザーから受け取った認証コードを貼り付けて「デコードしてセット」を押してください。</div>
+    <textarea id="remoteSDP"></textarea>
+    <button id="setRemote">デコードしてセット</button>
+  </div>
+  <script>
+    const status = document.getElementById('status');
+    const log = document.getElementById('log');
+    const msg = document.getElementById('msg');
+    const sendBtn = document.getElementById('send');
+    const localSDP = document.getElementById('localSDP');
+    const remoteSDP = document.getElementById('remoteSDP');
+    const setRemote = document.getElementById('setRemote');
+
+    let pc, dc;
+
+    // 難読化関数（Base64→ROT13→AI風プレフィックス付与）
+    function obfuscate(str) {
+      const b64 = btoa(unescape(encodeURIComponent(str)));
+      const rot13 = b64.replace(/[A-Za-z]/g, c =>
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz".charAt(
+          ("NOPQRSTUVWXYZABCDEFGHIJKLMnopqrstuvwxyzabcdefghijklm").indexOf(c)
+        )
+      );
+      // AI風のprefix/suffixで包む
+      const prefix = "MUSUBUAI{";
+      const suffix = "}END";
+      return prefix + rot13 + suffix;
+    }
+    // 復号関数
+    function deobfuscate(str) {
+      if (!str.startsWith("MUSUBUAI{") || !str.endsWith("}END")) return null;
+      const rot13 = str.slice(9, -4);
+      const b64 = rot13.replace(/[A-Za-z]/g, c =>
+        "NOPQRSTUVWXYZABCDEFGHIJKLMnopqrstuvwxyzabcdefghijklm".charAt(
+          "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz".indexOf(c)
+        )
+      );
+      try {
+        return decodeURIComponent(escape(atob(b64)));
+      } catch {
+        return null;
+      }
+    }
+
+    function addMessage(text, sender) {
+      const div = document.createElement('div');
+      div.className = sender;
+      div.textContent = text;
+      log.appendChild(div);
+      log.scrollTop = log.scrollHeight;
+    }
+
+    async function start() {
+      pc = new RTCPeerConnection();
+      pc.ondatachannel = (event) => {
+        dc = event.channel;
+        setupDataChannel();
+      };
+      pc.onicecandidate = () => {
+        localSDP.value = obfuscate(JSON.stringify(pc.localDescription));
+      };
+    }
+
+    function setupDataChannel() {
+      dc.onopen = () => {
+        status.textContent = "むすぶAIコアセッション接続完了。応答可能です";
+        msg.disabled = false;
+        sendBtn.disabled = false;
+      };
+      dc.onmessage = (event) => {
+        addMessage(event.data, 'user');
+      };
+    }
+
+    sendBtn.onclick = () => {
+      if (msg.value && dc && dc.readyState === 'open') {
+        addMessage(msg.value, 'ai');
+        dc.send(msg.value);
+        msg.value = '';
+      }
+    };
+
+    msg.addEventListener('keydown', e => {
+      if (e.key === 'Enter') sendBtn.click();
+    });
+
+    setRemote.onclick = async () => {
+      if (!remoteSDP.value) return;
+      const decoded = deobfuscate(remoteSDP.value);
+      if (!decoded) {
+        alert("認証コードの形式が不正です（MUSUBUAI{...}END）");
+        return;
+      }
+      const sdp = JSON.parse(decoded);
+      await pc.setRemoteDescription(sdp);
+      if (sdp.type === 'offer') {
+        await pc.setLocalDescription(await pc.createAnswer());
+        localSDP.value = obfuscate(JSON.stringify(pc.localDescription));
+      }
+    };
+
+    // SDP受信側: offerを受けてからanswerを返す
+    (async function(){
+      await start();
+    })();
+  </script>
+</body>
+</html>
